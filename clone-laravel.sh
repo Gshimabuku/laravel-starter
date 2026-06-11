@@ -178,8 +178,10 @@ if [ "$IS_NEW" = true ]; then
         --prefer-dist \
         --no-interaction
 
-    docker compose exec app bash -c \
-        "cp -r /tmp/laravel_new/. /var/www/html/ && rm -rf /tmp/laravel_new"
+    docker compose exec -u root app bash -c \
+        "cp -r /tmp/laravel_new/. /var/www/html/ && \
+         chown -R www-data:www-data /var/www/html/ && \
+         rm -rf /tmp/laravel_new"
 
     echo -e "${GREEN}  Laravel インストール完了${NC}"
 else
