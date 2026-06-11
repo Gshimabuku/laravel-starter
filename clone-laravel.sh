@@ -208,6 +208,9 @@ echo ""
 echo -e "${CYAN}[4/4] Laravel 初期設定中...${NC}"
 
 if [ "$NEED_ENV" = true ]; then
+    # src/ ディレクトリの権限をユーザーに変更
+    sudo chown -R "$USER" "$PROJECT_DIR/src"
+
     # .env を直接ホスト側から生成（コンテナ内での書き込みを避ける）
     cat > "$PROJECT_DIR/src/.env" << ENV_EOF
 APP_NAME=${PROJECT_NAME}
