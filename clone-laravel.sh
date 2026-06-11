@@ -69,7 +69,7 @@ DEFAULT_APP_PORT=$(load_env_value "APP_URL" "8080" | grep -oP '(?<=:)\d+' || ech
 DEFAULT_DB_NAME=$(load_env_value "DB_DATABASE" "${PROJECT_NAME}_db")
 DEFAULT_DB_USER=$(load_env_value "DB_USERNAME" "laravel")
 DEFAULT_DB_PASSWORD=$(load_env_value "DB_PASSWORD" "secret")
-DEFAULT_DB_PORT=$(load_env_value "DB_PORT" "3306")
+DEFAULT_HOST_DB_PORT=$(load_env_value "DB_PORT" "3306")
 DEFAULT_REDIS_PORT=$(load_env_value "REDIS_PORT" "6379")
 DEFAULT_LARAVEL_VERSION=$(load_env_value "LARAVEL_VERSION" "11")
 DEFAULT_PHP_VERSION=$(load_env_value "PHP_VERSION" "8.3")
@@ -98,7 +98,7 @@ if [ ! -f "$PROJECT_DIR/src/.env" ]; then
     DB_NAME=$(prompt "DB データベース名" "$DEFAULT_DB_NAME")
     DB_USER=$(prompt "DB ユーザー名" "$DEFAULT_DB_USER")
     DB_PASSWORD=$(prompt "DB パスワード" "$DEFAULT_DB_PASSWORD")
-    DB_PORT=$(prompt "DB ポート番号" "$DEFAULT_DB_PORT")
+    HOST_DB_PORT=$(prompt "DB ホストポート番号" "$DEFAULT_HOST_DB_PORT")
     REDIS_PORT=$(prompt "Redis ポート番号" "$DEFAULT_REDIS_PORT")
 
     if [ "$IS_NEW" = true ]; then
@@ -113,7 +113,7 @@ else
     DB_NAME=$DEFAULT_DB_NAME
     DB_USER=$DEFAULT_DB_USER
     DB_PASSWORD=$DEFAULT_DB_PASSWORD
-    DB_PORT=$DEFAULT_DB_PORT
+    HOST_DB_PORT=$DEFAULT_HOST_DB_PORT
     REDIS_PORT=$DEFAULT_REDIS_PORT
     LARAVEL_VERSION=$DEFAULT_LARAVEL_VERSION
     PHP_VERSION=$DEFAULT_PHP_VERSION
@@ -127,7 +127,7 @@ echo -e "  プロジェクト名: ${GREEN}$PROJECT_NAME${NC}"
 echo -e "  アプリ URL    : ${GREEN}http://localhost:$APP_PORT${NC}"
 echo -e "  DB 名         : ${GREEN}$DB_NAME${NC}"
 echo -e "  DB ユーザー   : ${GREEN}$DB_USER${NC}"
-echo -e "  DB ポート     : ${GREEN}$DB_PORT${NC}"
+echo -e "  DB ホストポート: ${GREEN}$HOST_DB_PORT${NC}"
 echo -e "  Redis ポート  : ${GREEN}$REDIS_PORT${NC}"
 echo -e "${CYAN}──────────────────────────────────────${NC}"
 echo ""
@@ -147,10 +147,15 @@ if ! command -v docker &>/dev/null; then
     curl -fsSL https://get.docker.com | sh
     sudo usermod -aG docker "$USER"
     echo -e "${GREEN}  Docker インストール完了${NC}"
-    echo -e "${YELLOW}  ※ ログアウト・ログインが必要な場合があります${NC}"
-else
-    echo -e "${GREEN}  Docker OK ($(docker --version | cut -d' ' -f3 | tr -d ','))${NC}"
+    echo -e "${YELLOW}──────────────────────────────────────${NC}"
+    echo -e "${YELLOW}  WSL2を再起動後、clone-laravel.sh を再実行してください${NC}"
+    echo -e "${YELLOW}  再起動方法（PowerShellで実行）:${NC}"
+    echo -e "${YELLOW}  wsl --shutdown${NC}"
+    echo -e "${YELLOW}──────────────────────────────────────${NC}"
+    exit 0
 fi
+
+echo -e "${GREEN}  Docker OK ($(docker --version | cut -d' ' -f3 | tr -d ','))${NC}"
 
 if ! docker compose version &>/dev/null; then
     echo -e "${RED}エラー: Docker Compose が見つかりません${NC}"
@@ -172,22 +177,29 @@ echo ""
 if [ "$IS_NEW" = true ]; then
     echo -e "${CYAN}[3/4] Laravel インストール中...${NC}"
 
-    docker compose exec app composer create-project \
+    docker compose exec -T app composer create-project \
         "laravel/laravel:^${LARAVEL_VERSION}" \
         /tmp/laravel_new \
         --prefer-dist \
         --no-interaction
 
-    docker compose exec -u root app bash -c \
+    # root権限でコピー・権限付与
+    docker compose exec -T -u root app bash -c \
         "cp -r /tmp/laravel_new/. /var/www/html/ && \
          chown -R www-data:www-data /var/www/html/ && \
+         chmod -R 775 /var/www/html/storage && \
          rm -rf /tmp/laravel_new"
 
     echo -e "${GREEN}  Laravel インストール完了${NC}"
 else
     echo -e "${CYAN}[3/4] 既存パッケージ復元中...${NC}"
 
-    docker compose exec app composer install --no-interaction
+    # root権限で権限付与後にcomposer install
+    docker compose exec -T -u root app bash -c \
+        "chown -R www-data:www-data /var/www/html/ && \
+         chmod -R 775 /var/www/html/storage"
+
+    docker compose exec -T app composer install --no-interaction
     echo -e "${GREEN}  composer install 完了${NC}"
 fi
 
@@ -196,7 +208,8 @@ echo ""
 echo -e "${CYAN}[4/4] Laravel 初期設定中...${NC}"
 
 if [ "$NEED_ENV" = true ]; then
-    docker compose exec app bash -c "cat > /var/www/html/.env" << ENV_EOF
+    # .env を直接ホスト側から生成（コンテナ内での書き込みを避ける）
+    cat > "$PROJECT_DIR/src/.env" << ENV_EOF
 APP_NAME=${PROJECT_NAME}
 APP_ENV=local
 APP_KEY=
@@ -228,9 +241,9 @@ ENV_EOF
     echo -e "${GREEN}  .env 生成完了${NC}"
 fi
 
-docker compose exec app php artisan key:generate
-docker compose exec app php artisan migrate
-docker compose exec app php artisan storage:link
+docker compose exec -T app php artisan key:generate
+docker compose exec -T app php artisan migrate
+docker compose exec -T app php artisan storage:link
 
 echo -e "${GREEN}  Laravel 初期設定完了${NC}"
 
